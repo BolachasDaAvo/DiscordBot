@@ -1,0 +1,12 @@
+:aries: Carneiro
+:taurus: Touro
+:gemini: Gémeos
+:cancer: Caranguejo
+:leo: Leão
+:virgo: Virgem
+:libra: Balança
+:scorpius: Escorpião
+:sagittarius: Sagitário
+:capricorn: Capricórnio
+:aquarius: Aquário
+:pisces: Peixes
