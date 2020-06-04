@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from Cogs.GreetingsCog import GreetingsCog
 from Cogs.MemeCog import MemeCog
 from Cogs.SignCog import SignCog
+from Cogs.TranslatorCog import TranslatorCog
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -33,5 +34,6 @@ bot = MyBot("!")
 bot.add_cog(GreetingsCog(bot))
 bot.add_cog(MemeCog(bot))
 bot.add_cog(SignCog(bot))
+bot.add_cog(TranslatorCog(bot))
 
 bot.run(TOKEN)

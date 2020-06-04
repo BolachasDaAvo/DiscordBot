@@ -36,6 +36,6 @@ class SignCog(commands.Cog):
                 else:
                     await ctx.channel.send(self.lastMessage)
             else:
-                await ctx.channel.send("Penis para ti também")
+                await ctx.channel.send("Only bot owner and Sarah Karina may use this command")
         else:
             print("Oh no")    
