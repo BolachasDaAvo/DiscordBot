@@ -8,6 +8,8 @@ from Cogs.SignCog import SignCog
 from Cogs.TranslatorCog import TranslatorCog
 from Cogs.WeatherCog import WeatherCog
 from Cogs.AdminCog import AdminCog
+from Cogs.Covid19Cog import Covid19Cog
+from Cogs.MusicCog import MusicCog
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -40,5 +42,7 @@ bot.add_cog(SignCog(bot))
 bot.add_cog(TranslatorCog(bot))
 bot.add_cog(WeatherCog(bot, WEATHER_KEY))
 bot.add_cog(AdminCog(bot))
+bot.add_cog(Covid19Cog(bot))
+bot.add_cog(MusicCog(bot))
 
 bot.run(TOKEN)
