@@ -61,8 +61,8 @@ class AudioPlayer():
         self.guild = ctx.guild
         self.audio_queue = asyncio.Queue()
         self.next_audio = asyncio.Event()
-        self.player_task = self.bot.loop.create_task(self.play_audio_task())
         self.last_playing_message = None
+        self.player_task = self.bot.loop.create_task(self.play_audio_task())
 
     async def play_audio_task(self):
         try:
@@ -75,7 +75,8 @@ class AudioPlayer():
                     embed = MusicCog.simple_embed(self.guild.me)
                     embed.description = "Leaving due to inactivity..."
                     await self.channel.send(embed = embed)
-                    await self.cog.cleanup_queue.put(self.guild.id)
+                    await self.voice_client.disconnect()
+                    player = self.cog.players.pop(self.guild.id, None)
                     return
 
                 self.voice_client.play(audio_source.source, after = self.next)
@@ -98,16 +99,24 @@ class AudioPlayer():
     def cancel(self):
         self.player_task.cancel()
 
-    async def clear(self):
+    def clear(self):
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()
+    
+    async def stop(self):
+        self.clear()
+        if self.voice_client.is_playing():
+            self.voice_client.stop()
+
+    async def kill(self):
+        self.cancel()
+        self.stop()
+        await self.voice_client.disconnect()
 
 class MusicCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.players = {}
-        self.cleanup_queue = asyncio.Queue()
-        self.cleanup_task = self.bot.loop.create_task(self.cleanup())
 
     @commands.command(name = "join")
     async def join(self, ctx: commands.Context):
@@ -143,11 +152,7 @@ class MusicCog(commands.Cog):
                 return
             destination = channel or ctx.author.voice.channel
             if ctx.voice_client:
-                try:
-                    await ctx.voice_client.move_to(destination)
-                except commands.BadArgument as e:
-                    await ctx.channel.send(str(e))
-                    return
+                await ctx.voice_client.move_to(destination)
             else:
                 await destination.connect()
                 if not self.players.get(ctx.guild.id):
@@ -164,7 +169,8 @@ class MusicCog(commands.Cog):
             if not ctx.voice_client:
                 await ctx.channel.send("Bot not connected to any voice channel.")
                 return
-            await self.cleanup_queue.put(ctx.guild.id)
+            player = self.players.pop(ctx.guild.id, None)
+            await player.kill()
         else:
             print("Channel is None")
 
@@ -181,7 +187,7 @@ class MusicCog(commands.Cog):
             try:
                 source = await AudioSource.get_audio_source(ctx, search)
             except MusicException as e:
-                ctx.channel.send("Error: {}".format(str(e)))
+                await ctx.channel.send("Error: {}".format(str(e)))
                 return
             else:
                 player = self.players.get(ctx.guild.id)
@@ -231,20 +237,17 @@ class MusicCog(commands.Cog):
         else:
             print("Channel is None")
 
-    async def cleanup(self):
-        while True:
-            player = self.players.pop(await self.cleanup_queue.get(), None)
-            player.cancel()
-            print("Cleaning up...")
-            if not player:
-                print("Skiping...")
-                continue
-            await player.clear()
-            if player.voice_client.is_playing():
-                player.voice_client.stop()
-            await player.voice_client.disconnect()
-            player = None
-            print(self.players)
+    @commands.command(name = "stop")
+    async def stop(self, ctx: commands.Context):
+        """
+        Stops playing audio and clears the queue.    
+        """
+        if ctx.channel:
+            if ctx.voice_client:
+                self.players[ctx.guild.id].stop()
+                await ctx.message.add_reaction("⏹️")
+        else:
+            print("Channel is None")
 
     @classmethod
     def simple_embed(cls, author: discord.Member):
