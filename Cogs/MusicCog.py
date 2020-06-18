@@ -69,31 +69,26 @@ class AudioPlayer():
         self.player_task = self.bot.loop.create_task(self.play_audio_task())
 
     async def play_audio_task(self):
-        try:
-            while True:
-                self.next_audio.clear()
-                try:
-                    async with timeout(300):
-                        audio_source = await self.audio_queue.get()
-                except asyncio.TimeoutError:
-                    embed = simple_embed(self.guild.me)
-                    embed.description = "Leaving due to inactivity..."
-                    await self.channel.send(embed = embed)
-                    await self.voice_client.disconnect()
-                    player = self.cog.players.pop(self.guild.id, None)
-                    return
+        while True:
+            self.next_audio.clear()
+            try:
+                async with timeout(300):
+                    audio_source = await self.audio_queue.get()
+            except asyncio.TimeoutError:
+                embed = simple_embed(self.guild.me)
+                embed.description = "Leaving due to inactivity..."
+                await self.channel.send(embed = embed)
+                await self.voice_client.disconnect()
+                player = self.cog.players.pop(self.guild.id, None)
+                return
 
-                self.voice_client.play(audio_source.source, after = self.next)
-                embed = simple_embed(audio_source.requester)
-                embed.description = "Now playing [{}]({}) | [{}]({})".format(audio_source.data["title"], audio_source.data["webpage_url"], audio_source.data["uploader"], audio_source.data["uploader_url"])
-                if self.last_playing_message:
-                    await self.last_playing_message.delete()
-                self.last_playing_message = await audio_source.channel.send(embed = embed)
-                await self.next_audio.wait()
-        except Exception as e:
-            print("FATAL ERROR: {}".format(e))
-            return
-
+            self.voice_client.play(audio_source.source, after = self.next)
+            embed = simple_embed(audio_source.requester)
+            embed.description = "Now playing [{}]({}) | [{}]({})".format(audio_source.data["title"], audio_source.data["webpage_url"], audio_source.data["uploader"], audio_source.data["uploader_url"])
+            if self.last_playing_message:
+                await self.last_playing_message.delete()
+            self.last_playing_message = await audio_source.channel.send(embed = embed)
+            await self.next_audio.wait()
 
     def next(self, error = None):
         if error:
