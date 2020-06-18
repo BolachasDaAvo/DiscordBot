@@ -5,8 +5,12 @@ import youtube_dl
 import asyncio
 from async_timeout import timeout
 import time
+import random
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+from Util import simple_embed
 
-#youtubedl polutes with error messages
+#youtubedl spams error messages
 youtube_dl.utils.bug_reports_message = lambda: ''
 
 class MusicException(Exception):
@@ -72,7 +76,7 @@ class AudioPlayer():
                     async with timeout(300):
                         audio_source = await self.audio_queue.get()
                 except asyncio.TimeoutError:
-                    embed = MusicCog.simple_embed(self.guild.me)
+                    embed = simple_embed(self.guild.me)
                     embed.description = "Leaving due to inactivity..."
                     await self.channel.send(embed = embed)
                     await self.voice_client.disconnect()
@@ -80,14 +84,14 @@ class AudioPlayer():
                     return
 
                 self.voice_client.play(audio_source.source, after = self.next)
-                embed = MusicCog.simple_embed(audio_source.requester)
+                embed = simple_embed(audio_source.requester)
                 embed.description = "Now playing [{}]({}) | [{}]({})".format(audio_source.data["title"], audio_source.data["webpage_url"], audio_source.data["uploader"], audio_source.data["uploader_url"])
                 if self.last_playing_message:
                     await self.last_playing_message.delete()
                 self.last_playing_message = await audio_source.channel.send(embed = embed)
                 await self.next_audio.wait()
-        except asyncio.CancelledError:
-            print("Task canceled")
+        except Exception as e:
+            print("FATAL ERROR: {}".format(e))
             return
 
 
@@ -103,10 +107,13 @@ class AudioPlayer():
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()
     
-    async def stop(self):
+    def stop(self):
         self.clear()
-        if self.voice_client.is_playing():
+        if self.voice_client.is_playing() or self.voice_client.is_paused():
             self.voice_client.stop()
+
+    def shuffle(self):
+        random.shuffle(self.audio_queue._queue)
 
     async def kill(self):
         self.cancel()
@@ -116,6 +123,7 @@ class AudioPlayer():
 class MusicCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.spotify = spotipy.Spotify(client_credentials_manager = SpotifyClientCredentials())
         self.players = {}
 
     @commands.command(name = "join")
@@ -185,19 +193,36 @@ class MusicCog(commands.Cog):
                 if await self.join(ctx):
                     return
             try:
-                source = await AudioSource.get_audio_source(ctx, search)
+                sources = []
+                if ("open.spotify.com/playlist/" in search):
+                    #its a spotify playlist
+                    results = self.spotify.playlist_tracks(search)
+                    for result in results["items"]:
+                        sources += [await AudioSource.get_audio_source(ctx, result["track"]["name"])]
+                elif ("open.spotify.com/album/" in search):
+                    #its a spotify album
+                    results = self.spotify.album_tracks(search)
+                    print(results)
+                elif ("open.spotify.com/track/" in search):
+                    #its a spotify track
+                    results = [self.spotify.track(search)]
+                    print(results)
+                else:
+                    #just search for it with youtube_dl:
+                    sources = [await AudioSource.get_audio_source(ctx, search)]
             except MusicException as e:
                 await ctx.channel.send("Error: {}".format(str(e)))
                 return
             else:
-                player = self.players.get(ctx.guild.id)
-                if not player:
-                    player = AudioPlayer(self, self.bot, ctx)
-                    self.players[ctx.guild.id] = player
-                await player.audio_queue.put(source)
-                embed = MusicCog.simple_embed(ctx.author)
-                embed.description = "Enqueued [{}]({}) | [{}]({})".format(source.data["title"], source.data["webpage_url"], source.data["uploader"], source.data["uploader_url"])
-                await ctx.channel.send(embed = embed)
+                for source in sources:
+                    player = self.players.get(ctx.guild.id)
+                    if not player:
+                        player = AudioPlayer(self, self.bot, ctx)
+                        self.players[ctx.guild.id] = player
+                    await player.audio_queue.put(source)
+                    embed = simple_embed(ctx.author)
+                    embed.description = "Enqueued [{}]({}) | [{}]({})".format(source.data["title"], source.data["webpage_url"], source.data["uploader"], source.data["uploader_url"])
+                    await ctx.channel.send(embed = embed)
         else:
             print("Channel is None")
 
@@ -249,11 +274,14 @@ class MusicCog(commands.Cog):
         else:
             print("Channel is None")
 
-    @classmethod
-    def simple_embed(cls, author: discord.Member):
-        embed = discord.Embed(
-            color = 16744587,
-            timestamp = datetime.datetime.now().astimezone()
-        )
-        embed.set_footer(text = str(author), icon_url = author.avatar_url)
-        return embed
+    @commands.command(name = "shuffle")
+    async def shuffle(self, ctx: commands.Context):
+        """
+        Shuffles queue.    
+        """
+        if ctx.channel:
+            if ctx.voice_client:
+                self.players[ctx.guild.id].shuffle()
+                await ctx.message.add_reaction("🔀")
+        else:
+            print("Channel is None")

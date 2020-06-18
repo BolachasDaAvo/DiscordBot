@@ -10,6 +10,7 @@ from Cogs.WeatherCog import WeatherCog
 from Cogs.AdminCog import AdminCog
 from Cogs.Covid19Cog import Covid19Cog
 from Cogs.MusicCog import MusicCog
+from Cogs.AnimalCog import AnimalCog
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -22,7 +23,7 @@ class MyBot(commands.Bot):
     async def on_ready(self):
         print(f"{self.user} has connected to Discord!")
     
-    async def on_message(self, message):
+    async def on_message(self, message : discord.Message):
         if message.author == self.user:
             #ignore my messages
             return
@@ -33,6 +34,8 @@ class MyBot(commands.Bot):
             await bot.process_commands(message)
             return
         else:
+            if "sporting" in message.content:
+                await message.add_reaction("😂")
             return
 
 bot = MyBot("!")
@@ -44,5 +47,6 @@ bot.add_cog(WeatherCog(bot, WEATHER_KEY))
 bot.add_cog(AdminCog(bot))
 bot.add_cog(Covid19Cog(bot))
 bot.add_cog(MusicCog(bot))
+bot.add_cog(AnimalCog(bot))
 
 bot.run(TOKEN)

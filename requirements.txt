@@ -1,0 +1,8 @@
+googletrans
+pyowm
+python-dotenv
+discord.py
+pycountry
+discord.py[voice]
+youtube_dl
+spotipy

@@ -29,8 +29,8 @@ class Covid19Cog(commands.Cog):
             embed.add_field(name = "New Deaths", value = response["total_new_deaths_today"])
             embed.add_field(name = "\u200b", value = "\u200b") #hack
             embed.add_field(name = "Recovered", value = response["total_recovered"])
-            embed.add_field(name = "Active", value = response["total_active_cases"])
-            embed.add_field(name = "Serious", value = response["total_serious_cases"])
+            embed.add_field(name = "Active", value = response["total_serious_cases"]) # for some reason the api has these values switched up
+            embed.add_field(name = "Serious", value = response["total_active_cases"])
             embed.set_footer(text = str(ctx.author), icon_url = ctx.author.avatar_url)
             embed.set_thumbnail(url = "https://www.countryflags.io/{}/flat/64.png".format(countryCode))
             await ctx.channel.send(embed = embed)
