@@ -9,6 +9,7 @@ import random
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from Util import simple_embed
+import traceback
 
 #youtubedl spams error messages
 youtube_dl.utils.bug_reports_message = lambda: ''
@@ -91,7 +92,9 @@ class AudioPlayer():
                 self.last_playing_message = await audio_source.channel.send(embed = embed)
                 await self.next_audio.wait()
         except Exception as e:
-            print("Caught exception is play_audio_task: {}".format(str(e)))
+            print("Caught exception of type {} in play_audio_task: {}".format(repr(e), str(e)))
+            traceback.print_exc()
+            
 
     def next(self, error = None):
         if error:
