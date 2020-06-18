@@ -6,3 +6,4 @@ pycountry
 discord.py[voice]
 youtube_dl
 spotipy
+PyNaCl
