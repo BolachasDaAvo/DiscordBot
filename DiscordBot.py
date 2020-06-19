@@ -35,7 +35,7 @@ class MyBot(commands.Bot):
             return
         else:
             if "sporting" in message.content:
-                await message.add_reaction("😂")
+                await message.add_reaction("💩")
             return
 
 bot = MyBot("!")
