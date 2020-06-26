@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 from dotenv import load_dotenv
+from Util import *
 from Cogs.GreetingsCog import GreetingsCog
 from Cogs.MemeCog import MemeCog
 from Cogs.SignCog import SignCog
@@ -24,14 +25,13 @@ class MyBot(commands.Bot):
         print(f"{self.user} has connected to Discord!")
     
     async def on_message(self, message : discord.Message):
-        if message.author == self.user:
-            #ignore my messages
-            return
-
         content = message.content
         if (content.startswith("!")):
             #its a command
-            await bot.process_commands(message)
+            try:
+                await bot.process_commands(message)
+            except commands.CommandNotFound:
+                message.channel.send(embed=embed_with_description("Unsupported command. !help for the list of supported commands."))
             return
         else:
             if "sporting" in message.content:
