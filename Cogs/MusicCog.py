@@ -2,6 +2,7 @@ from discord.ext import commands
 import discord
 import datetime
 import youtube_dl
+import youtube_dl.utils
 import asyncio
 from async_timeout import timeout
 import time
@@ -11,9 +12,12 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from Util import *
 import traceback
 import collections
+import functools
+import logging
+from typing import Union
 
-# youtubedl spams error messages
-youtube_dl.utils.bug_reports_message = lambda: ""
+# youtubedl spams bug messages
+youtube_dl.utils.bug_reports_message = lambda: ''
 
 
 def user_in_voice_channel_check():
@@ -70,15 +74,14 @@ class MusicException(Exception):
 class AudioSource:
     options = {
         "format": "bestaudio/best",
-        "extractaudio": True,
-        "audioformat": "mp3",
         "noplaylist": True,
         "ignoreerrors": False,
-        "logtostderr": False,
+        "logtostderr": True,
         "quiet": True,
         "no_warnings": True,
-        "default_search": "auto",
-        "no_color": True
+        "default_search": "ytsearch",
+        "source_address": "0.0.0.0",
+        "no_color": "True"
     }
     YTdl = youtube_dl.YoutubeDL(options)
 
@@ -102,37 +105,36 @@ class AudioSource:
             return s 
 
     @classmethod
-    async def get_audio_source(cls, ctx: commands.Context, search: str):
+    async def get_audio_source(cls, ctx: commands.Context, search: str, volume: float, loop: asyncio.BaseEventLoop):
+        partial = functools.partial(cls.YTdl.extract_info, search, download=False)
         try:
-            processedData = cls.YTdl.extract_info(search, download=False)
-
-            if not processedData:
-                raise MusicException("Couldn't find anything that matches {}".format(search))
-
-            if "entries" not in processedData:
-                audio = processedData
-            else:
-                audio = None
-                for entry in processedData["entries"]:
-                    if entry:
-                        audio = entry
-                        break
-                if not audio:
-                    raise MusicException("Couldn't find anything that matches {}".format(search))
-
-            return cls(discord.FFmpegPCMAudio(audio["url"], before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", options="-vn"), ctx, audio)
-        except Exception as e:
-            print("Caught exception of type {} in get_audio_source: {}".format(repr(e), str(e)))
+            processedData = await loop.run_in_executor(None, partial)
+        except youtube_dl.utils.YoutubeDLError as e:
             raise MusicException(str(e))
+        if not processedData:
+            raise MusicException("Couldn't find anything that matches {}".format(search))
+        if "entries" not in processedData:
+            audio = processedData
+        else:
+            audio = None
+            for entry in processedData["entries"]:
+                if entry:
+                    audio = entry
+                    break
+            if not audio:
+                raise MusicException("Couldn't find anything that matches {}".format(search))
+        return cls(discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(audio["url"], before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5", options="-vn"), volume=volume), ctx, audio)
 
-#TODO: fix playing message
-class AudioPlayer:
+
+class MusicPlayer:
     def __init__(self, cog, bot, ctx: commands.Context):
         self.bot = bot
         self.cog = cog
         self.voice_client = ctx.voice_client
         self.channel = ctx.channel
         self.guild = ctx.guild
+        self.volume = 1.0
+        self.now_playing = None
         self.audio_queue = asyncio.Queue()
         self.next_audio = asyncio.Event()
         self.player_task = self.bot.loop.create_task(self.play_audio_task())
@@ -144,33 +146,36 @@ class AudioPlayer:
                 self.next_audio.clear()
                 try:
                     async with timeout(300):
-                        audio_source = await self.audio_queue.get()
+                        self.now_playing = await self.audio_queue.get()
                 except asyncio.TimeoutError:
                     try:
-                        await self.channel.send(embed=embed_with_description(self.guild.me, "Leaving due to inactivity..."))
+                        await self.channel.send(embed=embed_with_description(self.guild.me, "Leaving due to inactivity..."), delete_after=60)
                     except discord.HTTPException:
                         pass
                     self.bot.loop.create_task(self.cog.cleanup(self.guild.id))
                     return
 
-                self.voice_client.play(audio_source.source, after=self.next)
-                try:
-                    await audio_source.channel.send(
-                        embed=embed_with_description(audio_source.requester, "Now playing " + str(audio_source)),
-                        delete_after=audio_source.data["duration"]
-                    )
-                except discord.HTTPException as e:
-                    print(str(e))
+                self.voice_client.play(self.now_playing.source, after=self.next)
+                await self.now_playing.channel.send(
+                    embed=embed_with_description(self.now_playing.requester, "Now playing " + str(self.now_playing)),
+                    delete_after=self.now_playing.data["duration"]
+                )
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print("Caught exception of type {} in play_audio_task: {}".format(repr(e), str(e)))
-            traceback.print_exc()
+            logging.getLogger("discord").exception("Fatal error in pay_audio_task", exc_info=e)
+            self.bot.loop.create_task(self.cog.cleanup(self.guild.id))
+            await self.channel.send(embed=embed_with_description(self.guild.me, "A fatal error happened and the music player has disconnected.\n The bot owner has been informed. Sorry for the inconvenience"), delete_after=60)
 
     def next(self, error=None):
         if error:
-            raise MusicException(str(error))
+            raise error
         self.bot.loop.call_soon_threadsafe(self.next_audio.set)
+
+    def set_volume(self, volume: float):
+        self.volume = volume
+        if self.voice_client.is_playing() or self.voice_client.is_paused():
+            self.voice_client.source.volume = volume
 
     def cancel(self):
         if self.player_task:
@@ -208,17 +213,9 @@ class MusicCog(commands.Cog):
         if player:
             await player.kill()
 
-    async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError):
-        if isinstance(error, commands.CheckAnyFailure):
-            print("ERROR in MusicCog of type {}: {}".format(repr(error), str(error.errors[0])))
-            await self.notify(ctx, str(error.errors[0]))
-        else:
-            print("ERROR in MusicCog of type {}: {}".format(repr(error), str(error)))
-            await self.notify(ctx, str(error))
-
     def cog_check(self, ctx: commands.Context):
         if (not ctx.guild or not ctx.message or not ctx.channel or not ctx.author or (ctx.author.voice and not ctx.author.voice.channel)):
-            print("Music Cog check failed.")
+            logging.getLogger("discord").warning("Failed cog check in MusicCog ctx.guild:{} ctx.message:{} ctx.channel:{} ctx.author:{}".format(ctx.guild, ctx.message, ctx.channel, ctx.author))
             return False
         return True
 
@@ -230,12 +227,6 @@ class MusicCog(commands.Cog):
             except Exception:
                 pass
 
-    async def notify(self, ctx: commands.Context, description: str):
-        await ctx.send(
-            embed=embed_with_description(ctx.author, description),
-            delete_after=20
-        )
-
     @commands.command(name="join")
     @user_in_voice_channel_check()
     async def join(self, ctx: commands.Context):
@@ -246,23 +237,22 @@ class MusicCog(commands.Cog):
         if ctx.voice_client:
             await ctx.voice_client.move_to(destination)
         else:
-            player = self.players[ctx.guild.id] = AudioPlayer(self, self.bot, ctx)
+            player = self.players[ctx.guild.id] = MusicPlayer(self, self.bot, ctx)
             player.voice_client = await destination.connect()
             player.next_audio.set()
             
     @commands.command(name="summon")
+    @user_in_voice_channel_check()
     async def summon(self, ctx: commands.Context, *, channel: discord.VoiceChannel = None):
         """
         Summons bot to specified voice channel.
         Defaults to user's voice channel, if applicable.
         """
-        if not ctx.author.voice.channel and not channel:
-            raise commands.CommandError("Did not specify a voice channel.")
         destination = channel or ctx.author.voice.channel
         if ctx.voice_client:
             await ctx.voice_client.move_to(destination)
         else:
-            player = self.players[ctx.guild.id] = AudioPlayer(self, self.bot, ctx)
+            player = self.players[ctx.guild.id] = MusicPlayer(self, self.bot, ctx)
             player.voice_client = await destination.connect()
             player.next_audio.set()
 
@@ -279,8 +269,8 @@ class MusicCog(commands.Cog):
     @user_in_voice_channel_check()
     async def play(self, ctx: commands.Context, *, search: str):
         """
-        Plays audio.
-        Will search for audio in various websites if no url is provided. Also supports spotify playlists, albums and tracks. SoundCloud coming SoonTM.
+        Plays audio. (max 100 songs in queue)
+        Will search for audio in various websites if no url is provided. Also supports spotify playlists, albums and tracks (playlist/album size limited to 100 songs). SoundCloud coming SoonTM.
         """
         if not ctx.voice_client:
             await self.join(ctx)
@@ -298,7 +288,7 @@ class MusicCog(commands.Cog):
                     try:
                         results = self.spotify.playlist_tracks(search)
                     except spotipy.SpotifyException as e:
-                        raise commands.CommandError("Unable to queue playlist {}".format(e.msg))
+                        raise commands.CommandError("Unable to queue playlist {}: {}".format(search, e.msg))
                     queued_songs = 0
                     for result in results["items"]:
                         query = result["track"]["name"]
@@ -307,7 +297,7 @@ class MusicCog(commands.Cog):
                         try:
                             await self.queue_from_youtube(ctx, query, True)
                         except MusicException as e:
-                            await self.notify(ctx, "Unable to queue track {}: {}".format(result["name"], e))
+                            await notify(ctx, "Unable to queue track {}: {}".format(result["name"], e))
                             continue
                         queued_songs += 1
                     await ctx.send(embed=embed_with_description(ctx.author, "Queued {} songs".format(queued_songs)))     
@@ -316,7 +306,7 @@ class MusicCog(commands.Cog):
                     try:
                         results = self.spotify.album_tracks(search)
                     except spotipy.SpotifyException as e:
-                        raise commands.CommandError("Unable to queue album {}".format(e.msg))
+                        raise commands.CommandError("Unable to queue album {}: {}".format(search, e.msg))
                     queued_songs = 0
                     for result in results["items"]:
                         query = result["name"]
@@ -325,7 +315,7 @@ class MusicCog(commands.Cog):
                         try:
                             await self.queue_from_youtube(ctx, query, True)
                         except MusicException as e:
-                            await self.notify(ctx, "Unable to queue track {}: {}".format(result["name"], e))
+                            await notify(ctx, "Unable to queue track {}: {}".format(result["name"], e))
                             continue
                         queued_songs += 1
                     await ctx.send(embed=embed_with_description(ctx.author, "Queued {} songs".format(queued_songs)))
@@ -334,7 +324,7 @@ class MusicCog(commands.Cog):
                     try:
                         result = self.spotify.track(search)
                     except spotipy.SpotifyException as e:
-                        raise commands.CommandError("Unable to queue track {}".format(e.msg))
+                        raise commands.CommandError("Unable to queue track {}: {}".format(search, e.msg))
                     query = result["name"]
                     for artist in result["artists"]:
                         query += " " + artist["name"]
@@ -350,19 +340,22 @@ class MusicCog(commands.Cog):
             await self.queue_from_youtube(ctx, search)
 
     async def queue_from_youtube(self, ctx: commands.Context, search: str, no_print: bool = False):
+        player = self.players[ctx.guild.id]
+        if player.audio_queue.qsize() > 100:
+            raise commands.CommandError("Unable to queue song {}: The audio queue is full".format(search))
         try:
-            source = await AudioSource.get_audio_source(ctx, search)
+            source = await AudioSource.get_audio_source(ctx, search, player.volume, self.bot.loop)
         except MusicException as e:
-            raise commands.CommandError(str(e))
-        await self.players.get(ctx.guild.id).audio_queue.put(source)
+            raise commands.CommandError("Unable to queue video: {}".format(str(e)))
+        await player.audio_queue.put(source)
         if not no_print:
             await ctx.send(
                 embed=embed_with_description(ctx.author, "Queued " + str(source))
             )
 
     @commands.command(name="skip")
-    @user_in_same_voice_channel_check()
     @commands.check_any(playing_check(), paused_check())
+    @user_in_same_voice_channel_check()
     @voice_client_check()
     async def skip(self, ctx: commands.Context):
         """
@@ -372,8 +365,8 @@ class MusicCog(commands.Cog):
         await ctx.message.add_reaction("⏩")
 
     @commands.command(name="pause")
-    @user_in_same_voice_channel_check()
     @playing_check()
+    @user_in_same_voice_channel_check()
     @voice_client_check()
     async def pause(self, ctx: commands.Context):
         """
@@ -383,8 +376,8 @@ class MusicCog(commands.Cog):
         await ctx.message.add_reaction("⏸️")
 
     @commands.command(name="resume")
-    @user_in_same_voice_channel_check()
     @paused_check()
+    @user_in_same_voice_channel_check()
     @voice_client_check()
     async def resume(self, ctx: commands.Context):
         """
@@ -430,7 +423,7 @@ class MusicCog(commands.Cog):
     @voice_client_check()
     async def queue(self, ctx: commands.Context, entries_per_page: int = 10):
         """
-        Displays queue **at the time of invocation** (up to 10 songs per page).
+        Displays queue **at the time of invocation**.
         """
         queue = self.players[ctx.guild.id].audio_queue._queue
         pages = []
@@ -457,7 +450,7 @@ class MusicCog(commands.Cog):
     @commands.command(name = "delete")
     @user_in_same_voice_channel_check()
     @voice_client_check()
-    async def delete(self, ctx: commands.Context, *,  query: str):
+    async def delete(self, ctx: commands.Context, *,  query: Union[int, str]):
         """
         Removes song from queue.
         Accepts:
@@ -466,26 +459,41 @@ class MusicCog(commands.Cog):
             * an interval (ex: !delete 1 5 -> deletes songs from index 1 to 5 inclusive)
         """
         queue = self.players[ctx.guild.id].audio_queue._queue
-
         #index
-        if is_int(query):
+        if isinstance(query, int):
             index = int(query) - 1
             if index >= len(queue) or index < 0:
                 raise commands.CommandError("Index out of range")
             del queue[index]
             await ctx.message.add_reaction("🚮")
             return
-        #range
-        indexes = query.split(" ")
-        if len(indexes) == 2 and is_int(indexes[0]) and is_int(indexes[1]):
-            lower_index = int(indexes[0]) - 1 if int(indexes[0]) - 1 >= 0 else 0
-            higher_index = int(indexes[1]) - 1 if int(indexes[1]) - 1 < len(queue) else len(queue) - 1
-            if lower_index > higher_index:
-                raise commands.CommandError("Invalid range")
-            for i in range(higher_index, lower_index - 1, -1):
-                del queue[i]
-            await ctx.send(embed=embed_with_description(ctx.author, "Deleted {} songs".format(higher_index - lower_index + 1)))
-        #string
         else:
-            self.players[ctx.guild.id].audio_queue._queue = collections.deque([audio for audio in queue if query.lower() not in audio.data["title"].lower()])
-            await ctx.send(embed=embed_with_description(ctx.author, "Deleted {} songs".format(len(queue) - len(self.players[ctx.guild.id].audio_queue._queue))))
+            index = query.split(" ")
+            #range
+            if len(index) == 2 and is_int(index[0]) and is_int(index[1]):
+                index[0] = int(index[0]) - 1 if int(index[0]) - 1 >= 0 else 0
+                index[1] = int(index[1]) - 1 if int(index[1]) - 1 < len(queue) else len(queue) - 1
+                if index[0] > index[1]:
+                    raise commands.CommandError("Invalid range")
+                for i in range(index[1], index[0] - 1, -1):
+                    del queue[i]
+                await ctx.send(embed=embed_with_description(ctx.author, "Deleted {} songs".format(index[1] - index[0] + 1)))
+            #string
+            else:
+                self.players[ctx.guild.id].audio_queue._queue = collections.deque([audio for audio in queue if query.lower() not in audio.data["title"].lower()])
+                await ctx.send(embed=embed_with_description(ctx.author, "Deleted {} songs".format(len(queue) - len(self.players[ctx.guild.id].audio_queue._queue))))
+
+    @commands.command(name = "volume")
+    @user_in_same_voice_channel_check()
+    @voice_client_check()
+    async def volume(self, ctx: commands.Context, volume: float):
+        """
+        Sets player's volume. Argument must be a percentage from 0 to 200.
+        Ex: !volume 100 -> sets the volume to 100% 
+        """
+        if volume < 0:
+            raise commands.CommandError("Volume must be greater or equal than 0")
+        elif volume > 200:
+            raise commands.CommandError("Volume must be less or equal than 200")
+        self.players[ctx.guild.id].set_volume(volume / 100)
+        await ctx.message.add_reaction("🔊")

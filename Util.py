@@ -3,6 +3,7 @@ from discord.ext import commands
 import datetime
 import asyncio
 import traceback
+import logging
 from urllib.parse import urlparse
 
 
@@ -51,8 +52,12 @@ async def paginator_task(ctx: commands.Context, embed: discord.Embed, pages: lis
             try:
                 reaction, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=180)
             except asyncio.TimeoutError:
-                await message.clear_reactions()
-                return
+                try:
+                    await message.delete()
+                except discord.NotFound:
+                    pass
+                finally:
+                    return
             await reaction.remove(user)
 
             # next page
@@ -74,14 +79,12 @@ async def paginator_task(ctx: commands.Context, embed: discord.Embed, pages: lis
             embed.description = pages[index] + "\n\npage {} of {}".format(index + 1, size)
             await message.edit(embed=embed)
     except Exception as e:
-        print("Caught exception of type {} in paginator_task: {}".format(repr(e), str(e)))
-        traceback.print_exc()
+        logging.getLogger("discord").exception("Fatal error in paginator_task", exc_info=e)
 
 
 def validate_url(url: str):
     result = urlparse(url)
     return result if result.scheme != "" and result.netloc != "" else None
-
 
 def is_int(query: str):
     try:
@@ -89,3 +92,6 @@ def is_int(query: str):
         return True
     except ValueError:
         return False
+
+async def notify(ctx: commands.Context, message: str):
+    await ctx.send(embed=embed_with_description(ctx.author, message), delete_after=60)
