@@ -13,7 +13,7 @@ class MemeCog(commands.Cog):
         return True
 
     async def cog_command_error(self, ctx, error):
-        await ctx.send(embed=embed_with_description(ctx.author, str(error)), delete_after=20)
+        await ctx.send(embed=embed_with_description(ctx.author, str(error)), delete_after=60)
 
     @commands.command(name="welp")
     async def welp(self, ctx):

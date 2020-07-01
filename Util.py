@@ -33,8 +33,12 @@ def embed_with_title(author: discord.Member, title: str):
     embed.title = title
     return embed
 
+def embed_with_title_description(author: discord.Member, title: str, description: str):
+    embed = embed_with_description(author, description)
+    embed.title = title
+    return embed
 
-async def paginator_task(ctx: commands.Context, embed: discord.Embed, pages: list, reactions: list):
+async def paginator_task(ctx: commands.Context, embed: discord.Embed, pages: list, reactions: list, timeout=180):
     try:
         size = len(pages)
         if size == 0:
@@ -50,7 +54,7 @@ async def paginator_task(ctx: commands.Context, embed: discord.Embed, pages: lis
 
         while True:
             try:
-                reaction, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=180)
+                reaction, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=timeout)
             except asyncio.TimeoutError:
                 try:
                     await message.delete()

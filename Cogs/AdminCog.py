@@ -27,6 +27,6 @@ class AdminCog(commands.Cog):
             )
             embed.set_footer(text=str(ctx.author),
                              icon_url=ctx.author.avatar_url)
-            await ctx.channel.send(embed=embed, delete_after=20)
+            await ctx.channel.send(embed=embed, delete_after=60)
         else:
             print("Oh no")
